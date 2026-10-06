@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 # Loads variables from .env into os.environ
 load_dotenv()
 import streamlit as st
-import openai  # OpenAI Python package (used to call Azure OpenAI)
+from openai import AzureOpenAI  # OpenAI Python package (used to call Azure OpenAI)
 
 GH = "https://api.github.com"
 TOKEN = os.getenv("GITHUB_TOKEN")
@@ -95,45 +95,23 @@ def explain(owner, repo, info, paths, level):
     if not (azure_key and azure_base and azure_model):
         raise ValueError("Please set AZURE_OPENAI_KEY, AZURE_OPENAI_BASE, and AZURE_OPENAI_MODEL env vars.")
 
-    # Configure openai python client for Azure
-    openai.api_type = "azure"
-    openai.api_key = azure_key
-    openai.api_base = azure_base.rstrip("/")  # no trailing slash
-    # api_version may be required depending on your resource; many examples use "2023-05-15" or newer.
-    # If your Azure resource expects a specific api-version, set it via AZURE_OPENAI_API_VERSION env var.
-    api_version = os.getenv("AZURE_OPENAI_API_VERSION")
-    if api_version:
-        openai.api_version = api_version
-
-    # Construct messages for chat
-    messages = [
-        {"role": "system", "content": system_instruction},
-        {"role": "user", "content": prompt}
-    ]
-
-    # Call Azure OpenAI Chat Completions via the OpenAI library
-    try:
-        # For Azure, model param should be the deployment name you created in portal
-        resp = openai.ChatCompletion.create(
-            engine=azure_model,  # 'engine' or 'deployment' name (older alias). OpenAI python lib uses 'engine' for Azure.
-            messages=messages,
-            max_tokens=1200,
-            temperature=0.2,
-            top_p=1.0,
-        )
-    except Exception as e:
-        # show helpful error
-        raise RuntimeError(f"Azure OpenAI request failed: {e}")
-
-    # Extract text from response
-    # Different versions may return resp.choices[0].message.content
-    try:
-        text = resp.choices[0].message["content"] if hasattr(resp, "choices") else resp["choices"][0]["message"]["content"]
-    except Exception:
-        # fallback to string conversion
-        text = str(resp)
-
-    return text
+    client = AzureOpenAI(
+        api_key=azure_key,
+        azure_endpoint=azure_base.rstrip("/"),
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21"),
+    )
+    resp = client.chat.completions.create(
+        model=azure_model,  # your deployment name
+        messages=[
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": prompt},
+        ],
+        max_completion_tokens=4000,
+    )
+    choice = resp.choices[0]
+    if not choice.message.content:
+        raise RuntimeError(f"Model returned no text. finish_reason={choice.finish_reason}")
+    return choice.message.content
 
 
 st.set_page_config(page_title="RepoSensei", page_icon="🧭")

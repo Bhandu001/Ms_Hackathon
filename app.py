@@ -15,6 +15,9 @@ Run:
 import os
 import re
 import requests
+from dotenv import load_dotenv
+# Loads variables from .env into os.environ
+load_dotenv()
 import streamlit as st
 import openai  # OpenAI Python package (used to call Azure OpenAI)
 

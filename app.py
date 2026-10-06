@@ -1,16 +1,22 @@
-"""RepoSensei MVP: paste a GitHub repo URL -> beginner-friendly explanation.
+"""
+RepoSensei MVP: paste a GitHub repo URL -> beginner-friendly explanation.
 
-Setup:   pip install streamlit requests google-genai
-Env vars: GEMINI_API_KEY, (optional) GITHUB_TOKEN
-Run:     streamlit run app.py
+Setup:
+    pip install -r requirements.txt
+Env vars:
+    AZURE_OPENAI_KEY        (required)  - API key for Azure OpenAI
+    AZURE_OPENAI_BASE       (required)  - Endpoint, e.g. https://your-resource-name.openai.azure.com
+    AZURE_OPENAI_MODEL      (required)  - Deployment name you created in Azure (e.g. "gpt-4o-deploy")
+    GITHUB_TOKEN            (optional)  - GitHub token for higher rate limits / private repos
+
+Run:
+    streamlit run app.py
 """
 import os
 import re
-
 import requests
 import streamlit as st
-from google import genai
-from google.genai import types
+import openai  # OpenAI Python package (used to call Azure OpenAI)
 
 GH = "https://api.github.com"
 TOKEN = os.getenv("GITHUB_TOKEN")
@@ -77,21 +83,54 @@ def explain(owner, repo, info, paths, level):
         "5) How to run it, 6) Ideas for a first contribution. "
         "Mention file paths so the reader can verify. If unsure, say so."
     )
-    
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY environment variable is missing!")
 
-    client = genai.Client(api_key=api_key)
-    
-    response = client.models.generate_content(
-        model="gemini-3.1-flash-lite",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=system_instruction,
+    # Azure OpenAI config from env
+    azure_key = os.getenv("AZURE_OPENAI_KEY")
+    azure_base = os.getenv("AZURE_OPENAI_BASE")  # e.g. https://<resource-name>.openai.azure.com
+    azure_model = os.getenv("AZURE_OPENAI_MODEL")  # deployment name in Azure
+
+    if not (azure_key and azure_base and azure_model):
+        raise ValueError("Please set AZURE_OPENAI_KEY, AZURE_OPENAI_BASE, and AZURE_OPENAI_MODEL env vars.")
+
+    # Configure openai python client for Azure
+    openai.api_type = "azure"
+    openai.api_key = azure_key
+    openai.api_base = azure_base.rstrip("/")  # no trailing slash
+    # api_version may be required depending on your resource; many examples use "2023-05-15" or newer.
+    # If your Azure resource expects a specific api-version, set it via AZURE_OPENAI_API_VERSION env var.
+    api_version = os.getenv("AZURE_OPENAI_API_VERSION")
+    if api_version:
+        openai.api_version = api_version
+
+    # Construct messages for chat
+    messages = [
+        {"role": "system", "content": system_instruction},
+        {"role": "user", "content": prompt}
+    ]
+
+    # Call Azure OpenAI Chat Completions via the OpenAI library
+    try:
+        # For Azure, model param should be the deployment name you created in portal
+        resp = openai.ChatCompletion.create(
+            engine=azure_model,  # 'engine' or 'deployment' name (older alias). OpenAI python lib uses 'engine' for Azure.
+            messages=messages,
+            max_tokens=1200,
+            temperature=0.2,
+            top_p=1.0,
         )
-    )
-    return response.text
+    except Exception as e:
+        # show helpful error
+        raise RuntimeError(f"Azure OpenAI request failed: {e}")
+
+    # Extract text from response
+    # Different versions may return resp.choices[0].message.content
+    try:
+        text = resp.choices[0].message["content"] if hasattr(resp, "choices") else resp["choices"][0]["message"]["content"]
+    except Exception:
+        # fallback to string conversion
+        text = str(resp)
+
+    return text
 
 
 st.set_page_config(page_title="RepoSensei", page_icon="🧭")
